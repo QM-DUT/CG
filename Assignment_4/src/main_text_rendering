@@ -1,0 +1,307 @@
+// This example is heavily based on the tutorial at https://open.gl
+#include <ft2build.h>
+#include FT_FREETYPE_H 
+// OpenGL Helpers to reduce the clutter
+#include "Helpers.h"
+//将头文件变成cpp文件
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+// GLFW is necessary to handle the OpenGL context
+#include <GLFW/glfw3.h>
+
+// Linear Algebra Library
+#include <Eigen/Core>
+#include <Eigen/Dense>
+// Timer
+#include <chrono>
+#include<iostream>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <fstream>
+#include <map>
+using namespace std;
+using namespace glm;
+using namespace Eigen;
+
+// VertexBufferObject wrapper
+VertexBufferObject VBO;
+VertexArrayObject VAO;
+// Contains the vertex positions
+Eigen::MatrixXf V(2,3);
+struct Character {
+    GLuint     TextureID;  // ID handle of the glyph texture
+    glm::ivec2 Size;       // Size of glyph
+    glm::ivec2 Bearing;    // Offset from baseline to left/top of glyph
+    GLuint     Advance;    // Offset to advance to next glyph
+};
+
+std::map<GLchar, Character> Characters;
+void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+{
+    glViewport(0, 0, width, height);
+}
+
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
+{
+
+}
+
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+
+}
+void RenderText(Program &program, std::string text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color)
+{
+    // Activate corresponding render state	
+    program.bind();
+    program.setVec3("textColor", color.x, color.y, color.z);
+
+
+    glActiveTexture(GL_TEXTURE0);
+    VAO.bind();
+
+    // Iterate through all characters
+    std::string::const_iterator c;
+    for (c = text.begin(); c != text.end(); c++) 
+    {
+        Character ch = Characters[*c];
+
+        GLfloat xpos = x + ch.Bearing.x * scale;
+        GLfloat ypos = y - (ch.Size.y - ch.Bearing.y) * scale;
+
+        GLfloat w = ch.Size.x * scale;
+        GLfloat h = ch.Size.y * scale;
+        // Update VBO for each character
+        GLfloat vertices[6][4] = {
+            { xpos,     ypos + h,   0.0, 0.0 },            
+            { xpos,     ypos,       0.0, 1.0 },
+            { xpos + w, ypos,       1.0, 1.0 },
+
+            { xpos,     ypos + h,   0.0, 0.0 },
+            { xpos + w, ypos,       1.0, 1.0 },
+            { xpos + w, ypos + h,   1.0, 0.0 }           
+        };
+        // Render glyph texture over quad
+        glBindTexture(GL_TEXTURE_2D, ch.TextureID);
+        // Update content of VBO memory
+        VBO.bind();
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices); // Be sure to use glBufferSubData and not glBufferData
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        // Render quad
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        // Now advance cursors for next glyph (note that advance is number of 1/64 pixels)
+        x += (ch.Advance >> 6) * scale; // Bitshift by 6 to get value in pixels (2^6 = 64 (divide amount of 1/64th pixels by 64 to get amount of pixels))
+    }
+    //glBindVertexArray(0);
+    //glBindTexture(GL_TEXTURE_2D, 0);
+}
+int main(void)
+{
+    GLFWwindow* window;
+
+    // Initialize the library
+    if (!glfwInit())
+        return -1;
+
+    // Activate supersampling
+    glfwWindowHint(GLFW_SAMPLES, 8);
+
+    // Ensure that we get at least a 3.2 context
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+
+    // On apple we have to load a core profile with forward compatibility
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
+
+    // Create a windowed mode window and its OpenGL context
+    window = glfwCreateWindow(640, 480, "Hello World", NULL, NULL);
+    if (!window)
+    {
+        glfwTerminate();
+        return -1;
+    }
+
+    // Make the window's context current
+    glfwMakeContextCurrent(window);
+
+    #ifndef __APPLE__
+      glewExperimental = true;
+      GLenum err = glewInit();
+      if(GLEW_OK != err)
+      {
+        /* Problem: glewInit failed, something is seriously wrong. */
+       fprintf(stderr, "Error: %s\n", glewGetErrorString(err));
+      }
+      glGetError(); // pull and savely ignonre unhandled errors like GL_INVALID_ENUM
+      fprintf(stdout, "Status: Using GLEW %s\n", glewGetString(GLEW_VERSION));
+    #endif
+
+    int major, minor, rev;
+    major = glfwGetWindowAttrib(window, GLFW_CONTEXT_VERSION_MAJOR);
+    minor = glfwGetWindowAttrib(window, GLFW_CONTEXT_VERSION_MINOR);
+    rev = glfwGetWindowAttrib(window, GLFW_CONTEXT_REVISION);
+    printf("OpenGL version recieved: %d.%d.%d\n", major, minor, rev);
+    printf("Supported OpenGL is %s\n", (const char*)glGetString(GL_VERSION));
+    printf("Supported GLSL is %s\n", (const char*)glGetString(GL_SHADING_LANGUAGE_VERSION));
+
+    // Set OpenGL options
+    glEnable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+
+    FT_Library ft;
+    if (FT_Init_FreeType(&ft))
+        std::cout << "ERROR::FREETYPE: Could not init FreeType Library" << std::endl;
+
+    FT_Face face;
+    if (FT_New_Face(ft, "../fonts/arial.ttf", 0, &face))
+        std::cout << "ERROR::FREETYPE: Failed to load font" << std::endl;  
+    FT_Set_Pixel_Sizes(face, 0, 48);  
+
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1); // Disable byte-alignment restriction
+  
+    for (GLubyte c = 0; c < 128; c++)
+    {
+        // Load character glyph 
+        if (FT_Load_Char(face, c, FT_LOAD_RENDER))
+        {
+            std::cout << "ERROR::FREETYPE: Failed to load Glyph" << std::endl;
+            continue;
+        }
+        // Generate texture
+        GLuint texture;
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        cout<<c<<"  "<<face->glyph->bitmap.width<<"  "<< face->glyph->bitmap.rows<<endl;
+        //cout<<face->glyph->bitmap.buffer<<endl;
+        glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            GL_RED,
+            face->glyph->bitmap.width,
+            face->glyph->bitmap.rows,
+            0,
+            GL_RED,
+            GL_UNSIGNED_BYTE,
+            face->glyph->bitmap.buffer
+        );
+        // Set texture options
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        // Now store character for later use
+        Character character = {
+            texture, 
+            glm::ivec2(face->glyph->bitmap.width, face->glyph->bitmap.rows),
+            glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top),
+            face->glyph->advance.x
+        };
+        Characters.insert(std::pair<GLchar, Character>(c, character));
+    }
+    FT_Done_Face(face);
+    FT_Done_FreeType(ft);
+
+
+    // Initialize the OpenGL Program
+    // A program controls the OpenGL pipeline and it must contains
+    // at least a vertex shader and a fragment shader to be valid
+    Program program;
+    const GLchar* vertex_shader =
+            "#version 330 core\n"
+                    "layout (location = 0) in vec4 vertex;"
+                    "out vec2 TexCoords;"
+                    "uniform mat4 projection;"
+                    "void main()"
+                    "{"
+                    "    gl_Position = projection * vec4(vertex.xy, 0.0, 1.0);"
+                    "    TexCoords = vertex.zw;"
+                    "}";
+    const GLchar* fragment_shader =
+            "#version 330 core\n"
+                    "in vec2 TexCoords;"
+                    "out vec4 outColor;"
+
+                    "uniform sampler2D text;"
+                    "uniform vec3 textColor;"
+
+                    "void main()"
+                    "{"  
+                    "    vec4 sampled = vec4(1.0, 1.0, 1.0, texture(text, TexCoords).r);"
+                    "    outColor = vec4(textColor, 1.0) * sampled;"
+                    "}";
+
+
+    glm::mat4 projection = glm::ortho(0.0f, 800.0f, 0.0f, 600.0f);
+
+
+    
+    // Compile the two shaders and upload the binary to the GPU
+    // Note that we have to explicitly specify that the output "slot" called outColor
+    // is the one that we want in the fragment buffer (and thus on screen)
+
+    VAO.init();
+    VBO.init();
+    V.resize(4,6);
+    VBO.update(V);
+
+
+    program.init(vertex_shader,fragment_shader,"outColor");
+    program.bind();
+
+    // The vertex shader wants the position of the vertices as an input.
+    // The following line connects the VBO we defined above with the position "slot"
+    // in the vertex shader
+    VAO.bind();
+    program.bindVertexAttribArray("vertex",VBO);
+
+    // Save the current time --- it will be used to dynamically change the triangle color
+    auto t_start = std::chrono::high_resolution_clock::now();
+
+    // Register the keyboard callback
+    glfwSetKeyCallback(window, key_callback);
+
+    // Register the mouse callback
+    glfwSetMouseButtonCallback(window, mouse_button_callback);
+
+    // Update viewport
+    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+    
+    // Loop until the user closes the window
+    while (!glfwWindowShouldClose(window))
+    {
+        // Bind your VAO (not necessary if you have only one)
+        VAO.bind();
+
+        // Bind your program
+        program.bind();
+        program.setMat4("projection",projection);
+        // Clear the framebuffer
+        glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        RenderText(program, "This is sample text", 25.0f, 25.0f, 1.0f, glm::vec3(0.5, 0.8f, 0.2f));
+        RenderText(program, "(C) LearnOpenGL.com", 540.0f, 570.0f, 0.5f, glm::vec3(0.3, 0.7f, 0.9f));
+
+        // Swap front and back buffers
+        glfwSwapBuffers(window);
+
+        // Poll for and process events
+        glfwPollEvents();
+    }
+
+    // Deallocate opengl memory
+    program.free();
+    VAO.free();
+    VBO.free();
+
+    // Deallocate glfw internals
+    glfwTerminate();
+    return 0;
+}
